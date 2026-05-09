@@ -24,11 +24,20 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Read the session synchronously on the client so protected routes never
+  // get stuck on the loading spinner waiting for an effect to flush. On the
+  // server there is no localStorage, so we start unauthenticated and the
+  // client takes over on hydration.
+  const [session, setSession] = useState<AuthSession | null>(() =>
+    typeof window === "undefined" ? null : authService.getSession(),
+  );
+  const [isLoading, setIsLoading] = useState(() => typeof window === "undefined");
 
   useEffect(() => {
-    setSession(authService.getSession());
+    // Re-sync after hydration in case the SSR HTML reflected a stale state,
+    // and clear the loading flag for the (rare) SSR-only initial paint.
+    const current = authService.getSession();
+    setSession((prev) => (prev?.token === current?.token ? prev : current));
     setIsLoading(false);
   }, []);
 
@@ -69,8 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-export function useAuth(): AuthContextValue {
+// eslint-disable-next-line react-refresh/only-export-components
+export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");
   return ctx;
 }
